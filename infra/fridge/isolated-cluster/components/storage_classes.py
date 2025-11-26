@@ -118,6 +118,60 @@ class StorageClasses(ComponentResource):
                 standard_storage_name = storage_class.metadata.name
                 standard_supports_rwm = False
 
+            
+            case K8sEnvironment.ISAMBARD:
+                # also uses longhorn storage class
+                longhorn_ns = Namespace(
+                    "longhorn-system",
+                    metadata=ObjectMetaArgs(
+                        name="longhorn-system",
+                        labels={} | PodSecurityStandard.PRIVILEGED.value,
+                    ),
+                    opts=child_opts,
+                )
+
+                longhorn = Release(
+                    "longhorn",
+                    namespace=longhorn_ns.metadata.name,
+                    chart="longhorn",
+                    version="1.9.0",
+                    repository_opts=RepositoryOptsArgs(
+                        repo="https://charts.longhorn.io",
+                    ),
+                    values={
+                        "persistence": {"defaultClassReplicaCount": 1},
+                        "defaultSettings": {
+                            "defaultDataPath": "/local/volumes",
+                            },
+                    },
+                    opts=ResourceOptions.merge(
+                        child_opts,
+                        ResourceOptions(depends_on=[longhorn_ns]),
+                    ),
+                )
+
+                storage_class = StorageClass(
+                    "fridge_storage_class",
+                    allow_volume_expansion=True,
+                    metadata=ObjectMetaArgs(
+                        name=STORAGE_CLASS_NAME,
+                    ),
+                    parameters={
+                        "dataLocality": "best-effort",
+                        "fsType": "ext4",
+                        "numberOfReplicas": "1",
+                        "staleReplicaTimeout": "2880",
+                    },
+                    provisioner="driver.longhorn.io",
+                    opts=ResourceOptions.merge(
+                        child_opts,
+                        ResourceOptions(depends_on=[longhorn]),
+                    ),
+                )
+
+                standard_storage_name = storage_class.metadata.name
+                standard_supports_rwm = True
+
         self.encrypted_storage_class = storage_class
         self.standard_storage_name = standard_storage_name
         self.standard_supports_rwm = standard_supports_rwm
