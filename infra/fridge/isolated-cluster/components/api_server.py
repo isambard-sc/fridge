@@ -77,7 +77,7 @@ class ApiServer(ComponentResource):
 
         match args.k8s_environment:
             case K8sEnvironment.ISAMBARD:
-                API_SERVER_IMAGE = "hcr.io/alan-turing-institute/fridge:api-build-arm64"
+                API_SERVER_IMAGE = "ghcr.io/alan-turing-institute/fridge:api-build-arm64"
             case _:
                 API_SERVER_IMAGE = "ghcr.io/alan-turing-institute/fridge:main"
 
