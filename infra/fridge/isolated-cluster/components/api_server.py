@@ -36,13 +36,6 @@ from pulumi_kubernetes.rbac.v1 import (
 from enums import K8sEnvironment, PodSecurityStandard
 
 
-match k8s_environment:
-    case K8sEnvironment.ISAMBARD:
-        API_SERVER_IMAGE = "hcr.io/alan-turing-institute/fridge:api-build-arm64"
-    case _:
-        API_SERVER_IMAGE = "ghcr.io/alan-turing-institute/fridge:main"
-
-
 class ApiServerArgs:
     def __init__(
         self,
@@ -80,6 +73,12 @@ class ApiServer(ComponentResource):
             ),
             opts=child_opts,
         )
+
+        match args.k8s_environment:
+            case K8sEnvironment.ISAMBARD:
+                api_server_image = "hcr.io/alan-turing-institute/fridge:api-build-arm64"
+            case _:
+                api_server_image = "ghcr.io/alan-turing-institute/fridge:main"
 
         # Define argo workflows service accounts and roles
         # See https://argo-workflows.readthedocs.io/en/latest/security/
