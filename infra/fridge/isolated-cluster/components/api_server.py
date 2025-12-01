@@ -48,6 +48,7 @@ class ApiServerArgs:
         self,
         argo_server_ns: str,
         argo_workflows_ns: str,
+        k8s_environment: K8sEnvironment,
         config: pulumi.Config,
         minio_tenant_name: str,
         minio_url: Output[str],
