@@ -53,6 +53,7 @@ class ApiServerArgs:
         self.minio_tenant_name = minio_tenant_name
         self.minio_url = minio_url
         self.verify_tls = verify_tls
+        self.k8s_environment = k8s_environment
 
 
 class ApiServer(ComponentResource):
