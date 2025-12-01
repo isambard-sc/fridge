@@ -77,9 +77,9 @@ class ApiServer(ComponentResource):
 
         match args.k8s_environment:
             case K8sEnvironment.ISAMBARD:
-                api_server_image = "hcr.io/alan-turing-institute/fridge:api-build-arm64"
+                API_SERVER_IMAGE = "hcr.io/alan-turing-institute/fridge:api-build-arm64"
             case _:
-                api_server_image = "ghcr.io/alan-turing-institute/fridge:main"
+                API_SERVER_IMAGE = "ghcr.io/alan-turing-institute/fridge:main"
 
         # Define argo workflows service accounts and roles
         # See https://argo-workflows.readthedocs.io/en/latest/security/
