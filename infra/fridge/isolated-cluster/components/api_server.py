@@ -78,8 +78,10 @@ class ApiServer(ComponentResource):
         match args.k8s_environment:
             case K8sEnvironment.ISAMBARD:
                 API_SERVER_IMAGE = "ghcr.io/alan-turing-institute/fridge:api-build-arm64"
+                Service_type = "ClusterIP"
             case _:
                 API_SERVER_IMAGE = "ghcr.io/alan-turing-institute/fridge:main"
+                Service_type = "LoadBalancer"
 
         # Define argo workflows service accounts and roles
         # See https://argo-workflows.readthedocs.io/en/latest/security/
@@ -291,6 +293,7 @@ class ApiServer(ComponentResource):
             if K8sEnvironment(args.config.get("k8s_env")) == K8sEnvironment.AKS
             else {}
         )
+
 
         self.api_service = Service(
             "fridge-api-service",
