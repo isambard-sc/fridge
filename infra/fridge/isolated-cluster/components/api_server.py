@@ -304,7 +304,7 @@ class ApiServer(ComponentResource):
                 annotations=api_service_annotations,
             ),
             spec=ServiceSpecArgs(
-                type="LoadBalancer",
+                type=Service_type,
                 selector=fridge_api_server.spec.template.metadata.labels,
                 ports=[
                     ServicePortArgs(
