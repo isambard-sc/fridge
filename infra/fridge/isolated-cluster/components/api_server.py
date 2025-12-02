@@ -77,7 +77,7 @@ class ApiServer(ComponentResource):
 
         match args.k8s_environment:
             case K8sEnvironment.ISAMBARD:
-                API_SERVER_IMAGE = "ghcr.io/alan-turing-institute/fridge:api-build-arm64"
+                API_SERVER_IMAGE = "ghcr.io/craddm/fridge:api-refresh-minio-creds"
                 Service_type = "ClusterIP"
             case _:
                 API_SERVER_IMAGE = "ghcr.io/alan-turing-institute/fridge:main"
