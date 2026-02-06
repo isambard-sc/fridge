@@ -2,7 +2,26 @@ from string import Template
 
 import pulumi
 from pulumi import ComponentResource, ResourceOptions
-from pulumi_kubernetes.core.v1 import Namespace
+
+from pulumi_kubernetes.batch.v1 import (
+    Job,
+    JobSpecArgs,
+)
+from pulumi_kubernetes.core.v1 import (
+    ConfigMap,
+    ContainerArgs,
+    EnvVarArgs,
+    Namespace,
+    PodSpecArgs,
+    PodTemplateSpecArgs,
+    Secret,
+    SecurityContextArgs,
+    Service,
+    ServicePortArgs,
+    ServiceSpecArgs,
+    VolumeArgs,
+    VolumeMountArgs,
+)
 from pulumi_kubernetes.helm.v3 import Release, ReleaseArgs, RepositoryOptsArgs
 from pulumi_kubernetes.meta.v1 import ObjectMetaArgs
 from pulumi_kubernetes.networking.v1 import Ingress
@@ -10,7 +29,7 @@ from pulumi_kubernetes.yaml import ConfigGroup
 
 from .storage_classes import StorageClasses
 
-from enums import PodSecurityStandard, TlsEnvironment, tls_issuer_names
+from enums import K8sEnvironment, PodSecurityStandard, TlsEnvironment, tls_issuer_names
 
 
 class ContainerRegistryArgs:
@@ -59,6 +78,15 @@ class ContainerRegistry(ComponentResource):
             else "ReadWriteOnce",
         }
 
+        api_service_annotations = (
+            {
+                "service.beta.kubernetes.io/azure-load-balancer-internal": "true",
+                "service.beta.kubernetes.io/azure-load-balancer-internal-subnet": "networking-access-nodes",
+            }
+            if K8sEnvironment(args.config.get("k8s_env")) == K8sEnvironment.AKS
+            else {}
+        )
+
         self.harbor = Release(
             "harbor",
             ReleaseArgs(
@@ -70,10 +98,8 @@ class ContainerRegistry(ComponentResource):
                 ),
                 values={
                     "expose": {
-                        "clusterIP": {
-                            "staticClusterIP": args.config.require("harbor_ip"),
-                        },
-                        "type": "clusterIP",
+                        "type": "loadBalancer",
+                        "loadBalancer": {"annotations": api_service_annotations},
                         "tls": {
                             "enabled": False,
                             "certSource": "none",
@@ -154,6 +180,26 @@ class ContainerRegistry(ComponentResource):
             ),
         )
 
+        self.harbor_internal_loadbalancer = Service.get(
+            "harbor-internal-lb",
+            id=pulumi.Output.concat(self.harbor_ns.metadata.name, "/harbor"),
+            opts=ResourceOptions.merge(
+                child_opts,
+                ResourceOptions(
+                    depends_on=[
+                        self.harbor,
+                    ]
+                ),
+            ),
+        )
+
+        # Extract the dynamically assigned IP address
+        self.harbor_lb_ip = self.harbor_internal_loadbalancer.status.apply(
+            lambda status: status.load_balancer.ingress[0].ip
+            if status and status.load_balancer and status.load_balancer.ingress
+            else None
+        )
+
         # Create a daemonset to skip TLS verification for the harbor registry
         # This is needed while using staging/self-signed certificates for Harbor
         # A daemonset is used to run the configuration on all nodes in the cluster
@@ -164,8 +210,11 @@ class ContainerRegistry(ComponentResource):
                 name="containerd-config",
                 labels={} | PodSecurityStandard.PRIVILEGED.value,
             ),
-            opts=ResourceOptions(
-                depends_on=[self.harbor],
+            opts=ResourceOptions.merge(
+                child_opts,
+                ResourceOptions(
+                    depends_on=[self.harbor],
+                ),
             ),
         )
 
@@ -182,8 +231,112 @@ class ContainerRegistry(ComponentResource):
         self.configure_containerd_daemonset = ConfigGroup(
             "configure-containerd-daemon",
             yaml=[self.skip_harbor_tls],
-            opts=ResourceOptions(
-                depends_on=[self.harbor],
+            opts=ResourceOptions.merge(
+                child_opts,
+                ResourceOptions(
+                    depends_on=[self.harbor],
+                ),
+            ),
+        )
+
+        with open("components/scripts/harbor_config.sh", "r") as f:
+            config_script = f.read()
+
+        harbor_config_script = ConfigMap(
+            "harbor-config-script",
+            metadata=ObjectMetaArgs(
+                name="harbor-config-script",
+                namespace=self.harbor_ns.metadata.name,
+            ),
+            data={"configure_harbor.sh": config_script},
+            opts=ResourceOptions.merge(
+                child_opts,
+                ResourceOptions(depends_on=[self.harbor]),
+            ),
+        )
+
+        harbor_admin_secret = Secret(
+            "harbor-admin-secret",
+            metadata=ObjectMetaArgs(
+                name="harbor-admin-credentials",
+                namespace=self.harbor_ns.metadata.name,
+            ),
+            type="Opaque",
+            string_data={
+                "username": "admin",
+                "password": args.config.require_secret("harbor_admin_password"),
+            },
+            opts=ResourceOptions.merge(
+                child_opts,
+                ResourceOptions(depends_on=[self.harbor]),
+            ),
+        )
+
+        self.configure_harbor = Job(
+            "configure-harbor",
+            metadata=ObjectMetaArgs(
+                name="harbor-config-job",
+                namespace=self.harbor_ns.metadata.name,
+                labels={"app": "harbor-config-job"},
+            ),
+            spec=JobSpecArgs(
+                backoff_limit=2,
+                template=PodTemplateSpecArgs(
+                    spec=PodSpecArgs(
+                        containers=[
+                            ContainerArgs(
+                                name="harbor-config-job",
+                                image="badouralix/curl-jq:latest",
+                                env=[
+                                    EnvVarArgs(
+                                        name="HARBOR_URL",
+                                        value="harbor.harbor.svc.cluster.local",
+                                    ),
+                                ],
+                                command=["/bin/sh", "/scripts/configure_harbor.sh"],
+                                volume_mounts=[
+                                    VolumeMountArgs(
+                                        name="harbor-credentials",
+                                        mount_path="/run/secrets/harbor",
+                                        read_only=True,
+                                    ),
+                                    VolumeMountArgs(
+                                        name="harbor-config-script-volume",
+                                        mount_path="/scripts",
+                                        read_only=True,
+                                    ),
+                                ],
+                                security_context=SecurityContextArgs(
+                                    allow_privilege_escalation=False,
+                                    capabilities={"drop": ["ALL"]},
+                                    run_as_group=1000,
+                                    run_as_non_root=True,
+                                    run_as_user=1000,
+                                    seccomp_profile={"type": "RuntimeDefault"},
+                                ),
+                            ),
+                        ],
+                        volumes=[
+                            VolumeArgs(
+                                name="harbor-credentials",
+                                secret={
+                                    "secret_name": harbor_admin_secret.metadata.name,
+                                },
+                            ),
+                            VolumeArgs(
+                                name="harbor-config-script-volume",
+                                config_map={
+                                    "name": harbor_config_script.metadata.name,
+                                },
+                            ),
+                        ],
+                        restart_policy="Never",
+                    )
+                ),
+            ),
+            opts=ResourceOptions.merge(
+                child_opts,
+                ResourceOptions(depends_on=[self.harbor_ns, harbor_config_script]),
             ),
         )
 
