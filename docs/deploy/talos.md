@@ -15,7 +15,7 @@ The tunnel changes how the two clusters talk to each other:
 users ──kubectl port-forward──> HAProxy (vpn-server)  :8000 ─┐  :6443 ─┐
                                                              v         v
                 talos-gateway Service ──> gateway container ──tunnel──> Talos node :30180 (relay) / :6443
-Talos containerd ──tunnel──> gateway container :8443 ──> ingress-nginx ──> Harbor
+Talos containerd ──tunnel──> gateway container :443 ──> ingress-nginx ──> Harbor
 ```
 
 So every flow between the clusters that FRIDGE allows goes through the tunnel:
@@ -41,7 +41,7 @@ There is no NetBird; set `netbird.enabled: false` and reach HAProxy with `kubect
   Traefik off. ServiceLB on, because ingress-nginx and the SideroLink agent are LoadBalancer Services.
 - The tenant's SideroLink pod in namespace `talos-tenant` (label `app.kubernetes.io/name: talos-tenant`), with:
   - a gateway container that listens on 6443 and 30180 and forwards them to the node's tunnel address;
-  - a listener on 8443 that forwards to `ingress-nginx-controller.ingress-nginx.svc:443`. TCP passthrough keeps the TLS SNI, so Harbor's own certificate is served;
+  - a listener on 443 at the tunnel's end that forwards to `ingress-nginx-controller.ingress-nginx.svc:443`. TCP passthrough keeps the TLS SNI, so Harbor's own certificate is served. It must be 443, not a high port: Harbor's token realm is its `externalURL`, `https://<harbor_fqdn>/`, so the node fetches its pull tokens there;
   - a ClusterIP Service `talos-gateway` for 6443 and 30180.
 - Its NetworkPolicy must admit 6443 and 30180 from the `vpn-server` namespace, and allow egress to kube-dns and ingress-nginx.
 
@@ -54,8 +54,8 @@ The machine configuration must have:
 - a firewall rule admitting 30180 from the tunnel's subnet;
 - once the access stack is up, the Harbor settings that the DaemonSets write on Dawn:
   - a `StaticHostConfig` mapping Harbor's host name to the tunnel's end;
-  - a `RegistryMirrorConfig` for each of docker.io, quay.io, ghcr.io, registry.k8s.io and nvcr.io, pointing at `https://<harbor_fqdn>:8443/v2/proxy-<registry>` with `overridePath: true`;
-  - a `RegistryTLSConfig` for `<harbor_fqdn>:8443` with the access stack's `harbor_ca_bundle` output.
+  - a `RegistryMirrorConfig` for each of docker.io, quay.io, ghcr.io, registry.k8s.io and nvcr.io, pointing at `https://<harbor_fqdn>/v2/<project>` with `overridePath: true` (and `skipFallback: true`, so the node pulls only through Harbor);
+  - a `RegistryTLSConfig` for `<harbor_fqdn>` with the access stack's `harbor_ca_bundle` output.
 
   The project names are the ones in `HARBOR_MIRRORS` in `isolated-cluster/components/container_runtime.py`, plus `proxy-nvcr.io`.
 
