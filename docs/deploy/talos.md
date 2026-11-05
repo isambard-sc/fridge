@@ -43,7 +43,9 @@ There is no NetBird; set `netbird.enabled: false` and reach HAProxy with `kubect
   - a gateway container that listens on 6443 and 30180 and forwards them to the node's tunnel address;
   - a listener on 443 at the tunnel's end that forwards to `ingress-nginx-controller.ingress-nginx.svc:443`. TCP passthrough keeps the TLS SNI, so Harbor's own certificate is served. It must be 443, not a high port: Harbor's token realm is its `externalURL`, `https://<harbor_fqdn>/`, so the node fetches its pull tokens there;
   - a ClusterIP Service `talos-gateway` for 6443 and 30180.
-- Its NetworkPolicy must admit 6443 and 30180 from the `vpn-server` namespace, and allow egress to kube-dns and ingress-nginx.
+- Its NetworkPolicy must admit 6443 and 30180 from the `vpn-server` namespace, and should allow the pod no egress.
+  The access stack adds the gateway's one way out itself, as a CiliumNetworkPolicy (`talos-gateway-to-harbor`): DNS for ingress-nginx's Service name only, and 443 to the ingress-nginx controller only with Harbor's TLS SNI (`serverNames`, which needs Cilium's L7 proxy, on by default).
+  A policy applies to the whole pod, and that pod also holds the tenant's KMS key and admin credentials, so keep it this narrow.
 
 ### Isolated cluster (Talos)
 

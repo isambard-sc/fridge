@@ -116,6 +116,65 @@ class NetworkPolicies(ComponentResource):
                     "toEndpoints": [gateway_endpoint],
                     "toPorts": [{"ports": [{"port": "30180", "protocol": "TCP"}]}],
                 }
+                # The gateway's own way out, to Harbor for the Talos node's image pulls. The
+                # tenant's NetworkPolicy allows the pod no egress, and a policy is pod-wide: the
+                # pod also holds the tenant's KMS key and admin credentials. So: one DNS name,
+                # and only TLS to Harbor's name at ingress-nginx (SNI; needs Cilium's L7 proxy)
+                CustomResource(
+                    "network_policy_talos_gateway_to_harbor",
+                    api_version="cilium.io/v2",
+                    kind="CiliumNetworkPolicy",
+                    metadata=ObjectMetaArgs(
+                        name="talos-gateway-to-harbor", namespace="talos-tenant"
+                    ),
+                    spec={
+                        "endpointSelector": {
+                            "matchLabels": {"app.kubernetes.io/name": "talos-tenant"}
+                        },
+                        "egress": [
+                            {
+                                "toEndpoints": [
+                                    {
+                                        "matchLabels": {
+                                            "k8s:io.kubernetes.pod.namespace": "kube-system",
+                                            "k8s-app": "kube-dns",
+                                        }
+                                    }
+                                ],
+                                "toPorts": [
+                                    {
+                                        "ports": [{"port": "53", "protocol": "ANY"}],
+                                        "rules": {
+                                            "dns": [
+                                                {
+                                                    "matchName": "ingress-nginx-controller.ingress-nginx.svc.cluster.local"
+                                                }
+                                            ]
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "toEndpoints": [
+                                    {
+                                        "matchLabels": {
+                                            "k8s:io.kubernetes.pod.namespace": "ingress-nginx",
+                                            "k8s:app.kubernetes.io/name": "ingress-nginx",
+                                            "k8s:app.kubernetes.io/component": "controller",
+                                        }
+                                    }
+                                ],
+                                "toPorts": [
+                                    {
+                                        "ports": [{"port": "443", "protocol": "TCP"}],
+                                        "serverNames": [args.harbor_fqdn],
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                    opts=child_opts,
+                )
                 # HAProxy resolves the gateway's Service name when it starts
                 vpn_extra_egress_rules.append(
                     {
