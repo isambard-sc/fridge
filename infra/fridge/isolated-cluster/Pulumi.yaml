@@ -34,7 +34,7 @@ config:
     secret: true
   k8s_env:
     type: string
-    description: The Kubernetes environment type (e.g. AKS, Dawn)
+    description: The Kubernetes environment type (AKS, Dawn, K3s, Talos or Zenith)
   organization_name:
     type: string
     description: The Pulumi organization name. This is `organization` when using any backend other than Pulumi Cloud
@@ -72,6 +72,10 @@ config:
       pool_size:
         type: string
         description: Size of the SeaweedFS storage pool (e.g., 40Gi)
+  longhorn_replicas:
+    type: integer
+    default: 2
+    description: Replicas of each Longhorn volume (Dawn, Zenith and Talos). Set to 1 for a single-node cluster
   base_fqdn:
     type: string
     description: Base FQDN for the deployment, used for the self-signed CA certificate
@@ -81,7 +85,7 @@ config:
   run_tests:
     type: boolean
     default: false
-    description: Deploy the example GPU test workflows. Only used on Dawn
+    description: Deploy the example GPU test workflows. Used on Dawn, Zenith and Talos
   kubernetes:context:
     value: ""
     description: Kubernetes context for the FRIDGE deployment

@@ -1,7 +1,11 @@
 import pulumi
 from pulumi import ComponentResource, Output, ResourceOptions
 from pulumi_kubernetes.apiextensions import CustomResource
-from pulumi_kubernetes.apps.v1 import Deployment, DeploymentSpecArgs
+from pulumi_kubernetes.apps.v1 import (
+    Deployment,
+    DeploymentSpecArgs,
+    DeploymentStrategyArgs,
+)
 from pulumi_kubernetes.core.v1 import (
     CapabilitiesArgs,
     ConfigMap,
@@ -225,7 +229,12 @@ class ApiServer(ComponentResource):
                     "name": args.cluster_issuer.metadata["name"],
                     "kind": "ClusterIssuer",
                 },
-                "ipAddresses": [
+                # On Talos the access cluster reaches the API by the gateway's Service name
+                (
+                    "dnsNames"
+                    if args.k8s_environment is K8sEnvironment.TALOS
+                    else "ipAddresses"
+                ): [
                     fridge_api_ip_raw,
                 ],
             },
@@ -462,6 +471,19 @@ class ApiServer(ComponentResource):
                         )
                     ],
                 )
+            case K8sEnvironment.TALOS:
+                # A ClusterIP, with a relay on the node's port 30180 (below)
+                api_svc_specs = ServiceSpecArgs(
+                    type="ClusterIP",
+                    selector=fridge_api_server.spec.template.metadata.labels,
+                    ports=[
+                        ServicePortArgs(
+                            protocol="TCP",
+                            port=80,
+                            target_port=8443,
+                        )
+                    ],
+                )
 
         self.api_service = Service(
             "fridge-api-service",
@@ -475,6 +497,9 @@ class ApiServer(ComponentResource):
             opts=child_opts,
         )
 
+        if args.k8s_environment is K8sEnvironment.TALOS:
+            self._talos_api_relay(self.api_service, child_opts)
+
         self.register_outputs(
             {
                 "api_server_ns": api_server_ns,
@@ -484,4 +509,117 @@ class ApiServer(ComponentResource):
                 "fridge_api_sa": fridge_api_sa,
                 "fridge_api_server": fridge_api_server,
             }
+        )
+
+    def _talos_api_relay(self, api_service: Service, opts: ResourceOptions) -> None:
+        """
+        Relay the node's port 30180 to the FRIDGE API Service.
+
+        The access cluster reaches a Talos node only through its SideroLink tunnel, over IPv6,
+        and Talos's firewall admits 30180 only from the tunnel's subnet. In this IPv4 cluster
+        neither Cilium nor kube-proxy serves a NodePort on IPv6, so a host-network TCP relay
+        listens there instead. TLS passes through to the API pod.
+        """
+        relay_ns = Namespace(
+            "fridge-api-relay-ns",
+            metadata=ObjectMetaArgs(
+                name="fridge-api-relay",
+                # hostNetwork is only allowed by the privileged standard; the container itself
+                # is unprivileged
+                labels={} | PodSecurityStandard.PRIVILEGED.value,
+            ),
+            opts=opts,
+        )
+
+        relay_config = ConfigMap(
+            "fridge-api-relay-config",
+            metadata=ObjectMetaArgs(
+                name="fridge-api-relay",
+                namespace=relay_ns.metadata.name,
+            ),
+            data={
+                "haproxy.cfg": api_service.spec.cluster_ip.apply(
+                    lambda cluster_ip: "\n".join(
+                        [
+                            "global",
+                            "  log stdout format raw local0",
+                            "defaults",
+                            "  mode tcp",
+                            "  log global",
+                            "  option tcplog",
+                            "  timeout connect 5s",
+                            "  timeout client 300s",
+                            "  timeout server 300s",
+                            "frontend fridge_api_in",
+                            "  bind :::30180 v4v6",
+                            "  default_backend fridge_api",
+                            "backend fridge_api",
+                            f"  server fridge_api {cluster_ip}:80 check inter 10s",
+                            "",
+                        ]
+                    )
+                )
+            },
+            opts=opts,
+        )
+
+        Deployment(
+            "fridge-api-relay",
+            metadata=ObjectMetaArgs(
+                name="fridge-api-relay",
+                namespace=relay_ns.metadata.name,
+            ),
+            spec=DeploymentSpecArgs(
+                replicas=1,
+                # The new pod can't bind the node's port while the old one holds it
+                strategy=DeploymentStrategyArgs(type="Recreate"),
+                selector=LabelSelectorArgs(match_labels={"app": "fridge-api-relay"}),
+                template=PodTemplateSpecArgs(
+                    metadata=ObjectMetaArgs(labels={"app": "fridge-api-relay"}),
+                    spec=PodSpecArgs(
+                        host_network=True,
+                        automount_service_account_token=False,
+                        containers=[
+                            ContainerArgs(
+                                name="haproxy",
+                                image=f"haproxy:{SoftwareVersion.HAPROXY.value}",
+                                ports=[
+                                    ContainerPortArgs(
+                                        container_port=30180, protocol="TCP"
+                                    )
+                                ],
+                                security_context=SecurityContextArgs(
+                                    allow_privilege_escalation=False,
+                                    capabilities=CapabilitiesArgs(drop=["ALL"]),
+                                    read_only_root_filesystem=True,
+                                    run_as_non_root=True,
+                                    run_as_user=99,  # haproxy in the official image
+                                    run_as_group=99,
+                                    seccomp_profile=SeccompProfileArgs(
+                                        type="RuntimeDefault"
+                                    ),
+                                ),
+                                volume_mounts=[
+                                    VolumeMountArgs(
+                                        name="config",
+                                        mount_path="/usr/local/etc/haproxy",
+                                        read_only=True,
+                                    )
+                                ],
+                            )
+                        ],
+                        volumes=[
+                            VolumeArgs(
+                                name="config",
+                                config_map=ConfigMapVolumeSourceArgs(
+                                    name=relay_config.metadata.name
+                                ),
+                            )
+                        ],
+                    ),
+                ),
+            ),
+            opts=ResourceOptions.merge(
+                opts, ResourceOptions(depends_on=[relay_config, api_service])
+            ),
         )

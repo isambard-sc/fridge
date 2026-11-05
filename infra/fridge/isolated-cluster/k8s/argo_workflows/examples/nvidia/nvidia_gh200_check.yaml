@@ -1,0 +1,47 @@
+# Checks a whole-GH200 Talos node: nvidia-smi sees the GPUs (with ATS addressing and C2C), then CUDA's vectoradd runs.
+# Images by digest; both are pulled through Harbor (proxy-docker.io and proxy-nvcr.io).
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: nvidia-gpu-example
+  namespace: argo-workflows
+spec:
+  entrypoint: nvidia-gpu-check
+  # The container toolkit's runtime, which mounts the driver and devices the device plugin allocates
+  podSpecPatch: '{"runtimeClassName": "nvidia"}'
+  templates:
+    - name: nvidia-gpu-check
+      steps:
+        - - name: nvidia-smi
+            template: nvidia-smi
+        - - name: vectoradd
+            template: vectoradd
+    - name: nvidia-smi
+      container:
+        resources:
+          limits:
+            nvidia.com/gpu: 4
+        # ubuntu:24.04, multi-arch
+        image: docker.io/library/ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+        command: ["sh", "-c"]
+        args:
+          - |
+            nvidia-smi
+            nvidia-smi topo -m
+            nvidia-smi -q | grep -iE "addressing|c2c|product name" | sort | uniq -c
+        env:
+          - name: NVIDIA_DRIVER_CAPABILITIES
+            value: utility
+    - name: vectoradd
+      container:
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+        # nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04, amd64 + arm64
+        image: nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41
+        env:
+          - name: NVIDIA_DRIVER_CAPABILITIES
+            value: compute,utility
+  serviceAccountName: argo-workflow
+  ttlStrategy:
+    secondsAfterCompletion: 3600 # 1 hour

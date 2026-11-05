@@ -31,6 +31,7 @@ class NetworkPolicies(ComponentResource):
         super().__init__("fridge:k8s:NetworkPolicies", name, {}, opts)
         child_opts = ResourceOptions.merge(opts, ResourceOptions(parent=self))
 
+        vpn_extra_egress_rules = []
         match args.k8s_environment:
             case K8sEnvironment.AKS:
                 # AKS uses Konnectivity to mediate some API/webhook traffic, and uses a different external DNS server
@@ -85,6 +86,62 @@ class NetworkPolicies(ComponentResource):
                     "network_policy_k3s",
                     file="./k8s/cilium/k3s.yaml",
                     opts=child_opts,
+                )
+            case K8sEnvironment.TALOS:
+                # The access cluster is k3s, so its policies apply, plus the SideroLink gateway
+                # (ServiceLB, upstream DNS, ingress-nginx from the gateway)
+                ConfigFile(
+                    "network_policy_k3s",
+                    file="./k8s/cilium/k3s.yaml",
+                    opts=child_opts,
+                )
+                ConfigFile(
+                    "network_policy_talos",
+                    file="./k8s/cilium/talos.yaml",
+                    opts=child_opts,
+                )
+                # The isolated cluster's API server and the FRIDGE API are both reached through
+                # the gateway container in the talos-tenant pod, which holds the tunnel's end
+                gateway_endpoint = {
+                    "matchLabels": {
+                        "k8s:io.kubernetes.pod.namespace": "talos-tenant",
+                        "app.kubernetes.io/name": "talos-tenant",
+                    }
+                }
+                k8s_api_endpoint_rule = {
+                    "toEndpoints": [gateway_endpoint],
+                    "toPorts": [{"ports": [{"port": "6443", "protocol": "TCP"}]}],
+                }
+                fridge_api_ip_rule = {
+                    "toEndpoints": [gateway_endpoint],
+                    "toPorts": [{"ports": [{"port": "30180", "protocol": "TCP"}]}],
+                }
+                # HAProxy resolves the gateway's Service name when it starts
+                vpn_extra_egress_rules.append(
+                    {
+                        "toEndpoints": [
+                            {
+                                "matchLabels": {
+                                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                                    "k8s-app": "kube-dns",
+                                }
+                            }
+                        ],
+                        "toPorts": [
+                            {
+                                "ports": [{"port": "53", "protocol": "ANY"}],
+                                "rules": {
+                                    "dns": [
+                                        {
+                                            "matchName": args.config.require(
+                                                "isolated_cluster_api_endpoint"
+                                            )
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    }
                 )
 
         self.cert_manager_to_harbor = CustomResource(
@@ -142,6 +199,31 @@ class NetworkPolicies(ComponentResource):
 
         # Configure NetBird network policies
         netbird_config = args.config.require_object("netbird")
+        netbird_egress_rules = (
+            self._netbird_egress_rules(args, netbird_config)
+            if netbird_config.get("enabled", True)
+            else []
+        )
+
+        self.vpn_server_cnp_custom = CustomResource(
+            "network_policy_vpn_server_custom",
+            api_version="cilium.io/v2",
+            kind="CiliumNetworkPolicy",
+            metadata=ObjectMetaArgs(name="vpn-server-custom", namespace="vpn-server"),
+            spec={
+                "endpointSelector": {"matchLabels": {"app": "netbird-proxy"}},
+                "egress": netbird_egress_rules
+                + vpn_extra_egress_rules
+                + [
+                    fridge_api_ip_rule,
+                    k8s_api_endpoint_rule,
+                ],
+            },
+            opts=child_opts,
+        )
+
+    @staticmethod
+    def _netbird_egress_rules(args: NetworkPoliciesArgs, netbird_config: dict) -> list:
         management_url = urlparse(netbird_config.get("management_url")).hostname
         if not management_url:
             raise ValueError(
@@ -243,18 +325,4 @@ class NetworkPolicies(ComponentResource):
                 {"matchName": args.config.require("isolated_cluster_api_endpoint")}
             )
 
-        self.vpn_server_cnp_custom = CustomResource(
-            "network_policy_vpn_server_custom",
-            api_version="cilium.io/v2",
-            kind="CiliumNetworkPolicy",
-            metadata=ObjectMetaArgs(name="vpn-server-custom", namespace="vpn-server"),
-            spec={
-                "endpointSelector": {"matchLabels": {"app": "netbird-proxy"}},
-                "egress": netbird_egress_rules
-                + [
-                    fridge_api_ip_rule,
-                    k8s_api_endpoint_rule,
-                ],
-            },
-            opts=child_opts,
-        )
+        return netbird_egress_rules

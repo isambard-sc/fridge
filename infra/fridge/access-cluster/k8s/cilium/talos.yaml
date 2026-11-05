@@ -1,0 +1,100 @@
+# Policies for the Talos target's access cluster: a single-node k3s with Cilium, which also runs the tenant's
+# SideroLink endpoint (the talos-tenant pod). Applied next to k3s.yaml.
+# The talos-tenant namespace has its own NetworkPolicy, which Cilium enforces; nothing here selects it.
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: kube-dns-upstream
+  namespace: kube-system
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s-app: kube-dns
+  egress:
+    # CoreDNS forwards to the node's resolvers, which are outside the cluster
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: servicelb
+  namespace: kube-system
+spec:
+  # k3s ServiceLB (klipper-lb) pods forward each LoadBalancer port on the node to its Service: ingress-nginx and the
+  # tenant's SideroLink API (4000), which the Talos node dials. The default-deny in kube-system would drop them
+  endpointSelector:
+    matchExpressions:
+      - key: svccontroller.k3s.cattle.io/svcname
+        operator: Exists
+  ingress:
+    - fromEntities:
+        - all
+  egress:
+    - toEntities:
+        - cluster
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-from-talos-gateway
+  namespace: ingress-nginx
+spec:
+  # The Talos node's containerd pulls from Harbor through the gateway container in the talos-tenant pod
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: ingress-nginx
+      k8s:app.kubernetes.io/component: controller
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: talos-tenant
+            app.kubernetes.io/name: talos-tenant
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # The admission webhook, called by the API server on this node
+    - fromEntities:
+        - kube-apiserver
+        - host
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: harbor-allow-egress-to-nvcr
+  namespace: harbor
+spec:
+  # The proxy-nvcr.io project: the NVIDIA device plugin and CUDA images. Blobs redirect to layers.nvcr.io
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: harbor
+      component: core
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchName: "nvcr.io"
+              - matchPattern: "*.nvcr.io"
+    - toFQDNs:
+        - matchName: "nvcr.io"
+        - matchPattern: "*.nvcr.io"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

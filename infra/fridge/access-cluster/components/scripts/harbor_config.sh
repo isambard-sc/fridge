@@ -36,6 +36,18 @@ function main() {
     make_proxy_project "proxy-ghcr.io" $githubcr_id
     make_proxy_project "proxy-k8s.io" $registryk8scr_id
 
+    if [ "$PROXY_NVCR" = "true" ]; then
+        make_remote_registry "NvidiaNGC" "docker-registry" "https://nvcr.io"
+        registries=$( \
+            curl -s \
+                -u "$HARBOR_ADMIN_USER:$HARBOR_ADMIN_PASSWORD" \
+                -H 'Content-Type: application/json' \
+                http://$HARBOR_URL/api/v2.0/registries \
+        )
+        nvcr_id=$(get_registry_id $registries "NvidiaNGC")
+        make_proxy_project "proxy-nvcr.io" $nvcr_id
+    fi
+
     # Create robot account for pulling images
     make_robot_account $FRIDGE_ROBOT_ACCOUNT
 

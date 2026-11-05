@@ -1,0 +1,24 @@
+# Example access stack for the Talos target (docs/deploy/talos.md). Copy to Pulumi.talos-demo.yaml and set the
+# secret with: pulumi config set --secret harbor_admin_password <value>
+config:
+  fridge-access:k8s_env: Talos
+  fridge-access:tls_environment: development
+  fridge-access:base_fqdn: fridge.internal
+  fridge-access:harbor_fqdn_prefix: harbor
+  fridge-access:harbor_registry_size: 50Gi
+  fridge-access:harbor_admin_password:
+    secure: REPLACE-WITH-pulumi-config-set---secret
+  # The ingress-nginx LoadBalancer IP (k3s ServiceLB: the node's IP)
+  fridge-access:harbor_ip: REPLACE-WITH-THE-K3S-NODE-IP
+  # Both are the SideroLink gateway Service in the talos-tenant namespace
+  fridge-access:fridge_api_ip_address: talos-gateway.talos-tenant.svc.cluster.local
+  fridge-access:isolated_cluster_api_endpoint: talos-gateway.talos-tenant.svc.cluster.local
+  fridge-access:netbird:
+    enabled: false
+  # Not used on Talos, but declared as required
+  fridge-access:lets_encrypt_email: unused@example.org
+  fridge-access:dawn_load_balancer_ip: unused
+  fridge-access:azure_subscription_id: unused
+  fridge-access:azure_resource_group: unused
+  fridge-access:azure_disk_encryption_set: unused
+  kubernetes:context: default

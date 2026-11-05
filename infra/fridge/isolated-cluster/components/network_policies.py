@@ -58,6 +58,24 @@ class NetworkPolicies(ComponentResource):
                     else "./k8s/cilium/gpu_zenith.yaml",
                     opts=child_opts,
                 )
+            case K8sEnvironment.TALOS:
+                # Talos: CoreDNS forwards to the node's host DNS, the API is relayed from the node,
+                # Longhorn for encrypted volumes and NVIDIA's device plugin for the GPUs
+                ConfigFile(
+                    "network_policy_talos",
+                    file="./k8s/cilium/talos.yaml",
+                    opts=child_opts,
+                )
+                ConfigFile(
+                    "network_policy_longhorn",
+                    file="./k8s/cilium/longhorn.yaml",
+                    opts=child_opts,
+                )
+                self.gpu_operator_cnp = ConfigFile(
+                    "gpu_operator_network_policies",
+                    file="./k8s/cilium/gpu_talos.yaml",
+                    opts=child_opts,
+                )
             case K8sEnvironment.K3S:
                 # K3S policies applicable for a local dev environment
                 # These could be used in any vanilla k8s + Cilium local cluster

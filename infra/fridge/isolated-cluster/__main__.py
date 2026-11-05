@@ -76,6 +76,7 @@ storage_classes = components.StorageClasses(
             if k8s_environment is K8sEnvironment.AKS
             else None
         ),
+        longhorn_replicas=config.get_int("longhorn_replicas") or 2,
     ),
 )
 
@@ -224,23 +225,28 @@ network_policies = components.NetworkPolicies(
         k8s_environment=k8s_environment,
     ),
     opts=ResourceOptions(
-        depends_on=resources,
+        # The GPU policies are in the GPU components' namespaces
+        depends_on=resources
+        + [gpu_operator],
     ),
 )
 
 # Container runtime configuration (containerd)
-container_runtime_config = components.ContainerRuntimeConfig(
-    "container-runtime-config",
-    args=components.ContainerRuntimeConfigArgs(
-        config=config,
-        harbor_ca_bundle=access_stack.get_output("harbor_ca_bundle"),
-        harbor_fqdn=access_stack.get_output("harbor_fqdn"),
-        k8s_environment=k8s_environment,
-    ),
-    opts=ResourceOptions(
-        depends_on=resources,
-    ),
-)
+# On Talos the node can't be configured from a pod: the registry mirrors, Harbor's CA and host name are
+# machine configuration, applied by the tenant with talosctl (docs/deploy/talos.md)
+if k8s_environment is not K8sEnvironment.TALOS:
+    container_runtime_config = components.ContainerRuntimeConfig(
+        "container-runtime-config",
+        args=components.ContainerRuntimeConfigArgs(
+            config=config,
+            harbor_ca_bundle=access_stack.get_output("harbor_ca_bundle"),
+            harbor_fqdn=access_stack.get_output("harbor_fqdn"),
+            k8s_environment=k8s_environment,
+        ),
+        opts=ResourceOptions(
+            depends_on=resources,
+        ),
+    )
 
 # Deploy Argo Workflow templates to validate GPU operator and other components are working correctly
 test_workflows = components.TestWorkflows(

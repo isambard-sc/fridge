@@ -9,6 +9,14 @@ FRIDGE is deployed to a Kubernetes (k8s) cluster that must meet certain requirem
 
 The targets are defined in an Enum object in `infra/fridge/access-cluster/enums/__init__.py`.
 These environments are used in flow control to make target specific changes.
+The enum is duplicated in `infra/fridge/isolated-cluster/enums/__init__.py`; add your target to both.
+
+:::{important}
+Both projects choose target-specific behaviour with `match k8s_environment:` blocks.
+Every `match` must handle your target, in both projects: a missing case usually fails later, as an unbound variable or a missing attribute, not where the case is missing.
+Search both projects for `match` and `K8sEnvironment.` and decide each one.
+The `Talos` target is a worked example: see [Deploying to Talos](../deploy/talos.md).
+:::
 Add your target to the Enum like the examples here
 
 ```python

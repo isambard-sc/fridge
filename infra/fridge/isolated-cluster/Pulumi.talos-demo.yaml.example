@@ -1,0 +1,33 @@
+# Example isolated stack for the Talos target (docs/deploy/talos.md). Copy to Pulumi.talos-demo.yaml and set every
+# `secure:` value with pulumi config set --secret (seaweedfs fields with --path).
+config:
+  fridge-isolated:k8s_env: Talos
+  fridge-isolated:access_cluster_stack: talos-demo
+  fridge-isolated:base_fqdn: fridge.internal
+  fridge-isolated:block_storage_size: 30Gi
+  fridge-isolated:longhorn_replicas: 1
+  fridge-isolated:run_tests: true
+  fridge-isolated:fridge_api_admin:
+    secure: REPLACE
+  fridge-isolated:fridge_api_password:
+    secure: REPLACE
+  fridge-isolated:s3_access_key:
+    secure: REPLACE
+  fridge-isolated:s3_secret_key:
+    secure: REPLACE
+  fridge-isolated:s3_admin_access_key:
+    secure: REPLACE
+  fridge-isolated:s3_admin_secret_key:
+    secure: REPLACE
+  fridge-isolated:seaweedfs:
+    pool_size: 40Gi
+    root_user:
+      secure: REPLACE
+    root_password:
+      secure: REPLACE
+  # Not used on Talos
+  fridge-isolated:azure_subscription_id: unused
+  fridge-isolated:azure_resource_group: unused
+  fridge-isolated:azure_disk_encryption_set: unused
+  # The kubeconfig context that reaches the Talos API server through HAProxy (docs/deploy/talos.md step 3)
+  kubernetes:context: fridge-talos

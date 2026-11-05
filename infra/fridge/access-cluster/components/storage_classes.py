@@ -115,7 +115,7 @@ class StorageClasses(ComponentResource):
 
                 standard_storage_name = storage_class.metadata.name
                 self.cinder_storage_class_name = cinder_storage_class.metadata.name
-            case K8sEnvironment.K3S:
+            case K8sEnvironment.K3S | K8sEnvironment.TALOS:
                 storage_class = StorageClass.get("fridge-storage-class", "local-path")
                 standard_storage_name = storage_class.metadata.name
 

@@ -6,6 +6,8 @@ class K8sEnvironment(Enum):
     AKS = "AKS"
     DAWN = "Dawn"
     K3S = "K3s"
+    # k3s access cluster; Talos isolated cluster reached through a TCP gateway (docs/deploy/talos.md)
+    TALOS = "Talos"
     ZENITH = "Zenith"
 
 
@@ -38,6 +40,9 @@ class SoftwareVersion(Enum):
     HAPROXY = "3.4.6"
     INTEL_GPU_OPERATOR = "0.35.0"
     LONGHORN = "1.9.0"
+    # Talos 1.14 runs Kubernetes 1.37, newer than Longhorn 1.9 was tested against
+    LONGHORN_TALOS = "1.12.1"
+    NVIDIA_DEVICE_PLUGIN = "0.20.1"
     NODE_FEATURE_DISCOVERY = "0.18.3"
     SEAWEEDFS = "4.51.0"
     TRUST_MANAGER = "0.25.0"

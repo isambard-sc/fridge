@@ -65,3 +65,16 @@ class TestWorkflows(ComponentResource):
                             "amd_examples": amd_examples,
                         }
                     )
+                case K8sEnvironment.TALOS:
+                    nvidia_examples = ConfigGroup(
+                        "nvidia-examples",
+                        files=[
+                            "./k8s/argo_workflows/examples/nvidia/nvidia_gh200_check.yaml",
+                        ],
+                        opts=child_opts,
+                    )
+                    self.register_outputs(
+                        {
+                            "nvidia_examples": nvidia_examples,
+                        }
+                    )

@@ -6,6 +6,8 @@ class K8sEnvironment(Enum):
     AKS = "AKS"
     DAWN = "Dawn"
     K3S = "K3s"
+    # k3s access cluster; Talos isolated cluster reached through a TCP gateway (docs/deploy/talos.md)
+    TALOS = "Talos"
     ZENITH = "Zenith"
 
 

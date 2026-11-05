@@ -1,0 +1,12 @@
+# NVIDIA's device plugin talks only to the kubelet, over its Unix socket, so it needs no network at all
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: deny-all-traffic
+  namespace: nvidia-device-plugin
+spec:
+  endpointSelector: {}
+  ingress:
+    - {}
+  egress:
+    - {}

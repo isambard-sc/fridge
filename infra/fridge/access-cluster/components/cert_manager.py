@@ -39,7 +39,7 @@ class CertManager(ComponentResource):
         k8s_environment = args.k8s_environment
 
         match k8s_environment:
-            case K8sEnvironment.AKS | K8sEnvironment.K3S:
+            case K8sEnvironment.AKS | K8sEnvironment.K3S | K8sEnvironment.TALOS:
                 # AKS specific configuration
                 # CertManager (TLS automation)
                 cert_manager_ns = Namespace(

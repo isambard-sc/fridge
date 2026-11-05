@@ -18,8 +18,10 @@ class StorageClassesArgs:
         azure_disk_encryption_set: str | None = None,
         azure_resource_group: str | None = None,
         azure_subscription_id: str | None = None,
+        longhorn_replicas: int = 2,
     ) -> None:
         self.k8s_environment = k8s_environment
+        self.longhorn_replicas = longhorn_replicas
         self.azure_disk_encryption_set = azure_disk_encryption_set
         self.azure_resource_group = azure_resource_group
         self.azure_subscription_id = azure_subscription_id
@@ -54,7 +56,7 @@ class StorageClasses(ComponentResource):
 
                 standard_storage_name = "azurefile"
                 standard_supports_rwm = True
-            case K8sEnvironment.DAWN | K8sEnvironment.ZENITH:
+            case K8sEnvironment.DAWN | K8sEnvironment.ZENITH | K8sEnvironment.TALOS:
                 longhorn_ns = Namespace(
                     "longhorn-system",
                     metadata=ObjectMetaArgs(
@@ -88,13 +90,19 @@ class StorageClasses(ComponentResource):
                     "longhorn",
                     namespace=longhorn_ns.metadata.name,
                     chart="longhorn",
-                    version=SoftwareVersion.LONGHORN.value,
+                    version=(
+                        SoftwareVersion.LONGHORN_TALOS
+                        if k8s_environment is K8sEnvironment.TALOS
+                        else SoftwareVersion.LONGHORN
+                    ).value,
                     repository_opts=RepositoryOptsArgs(
                         repo="https://charts.longhorn.io",
                     ),
                     # Add a toleration for the GPU node, to allow Longhorn to schedule pods/create volumes there
                     values={
-                        "persistence": {"defaultClassReplicaCount": 2},
+                        "persistence": {
+                            "defaultClassReplicaCount": args.longhorn_replicas
+                        },
                     },
                     opts=ResourceOptions.merge(
                         child_opts,
@@ -111,7 +119,7 @@ class StorageClasses(ComponentResource):
                     parameters={
                         "dataLocality": "best-effort",
                         "fsType": "ext4",
-                        "numberOfReplicas": "2",
+                        "numberOfReplicas": str(args.longhorn_replicas),
                         "staleReplicaTimeout": "2880",
                         "encrypted": "true",
                         "csi.storage.k8s.io/provisioner-secret-name": longhorn_encryption_secret.metadata.name,

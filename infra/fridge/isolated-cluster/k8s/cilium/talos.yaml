@@ -1,0 +1,83 @@
+# Policies for the Talos target's isolated cluster: one Talos node with Cilium (kube-proxy replacement), reached only
+# through the tenant's SideroLink tunnel. The API server, kubelet and the FRIDGE API relay are all on this node, so
+# what Dawn allows from `remote-node` comes from `host` (and `kube-apiserver`) here.
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: kube-dns-talos
+  namespace: kube-system
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s-app: kube-dns
+  egress:
+    # Talos forwards kube-dns to its host DNS (ResolverConfig forwardKubeDNSToHost), on this link-local address.
+    # Cilium may give it the host identity or a CIDR one, so allow both
+    - toCIDR:
+        - 169.254.116.108/32
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: fridge-api-relay
+  namespace: fridge-api
+spec:
+  # The relay on the node's port 30180 (host network), forwarding the access cluster's HAProxy to the API
+  endpointSelector:
+    matchLabels:
+      app: fridge-api-server
+  ingress:
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: longhorn-manager-webhooks
+  namespace: longhorn-system
+spec:
+  # Admission and conversion webhooks, called by the API server on this node
+  endpointSelector:
+    matchLabels:
+      app: longhorn-manager
+  ingress:
+    - fromEntities:
+        - kube-apiserver
+        - host
+      toPorts:
+        - ports:
+            - port: "9501"
+              endPort: 9502
+              protocol: TCP
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: longhorn-share-manager-host
+  namespace: longhorn-system
+spec:
+  # The node mounts ReadWriteMany volumes over NFS from the share manager
+  endpointSelector:
+    matchLabels:
+      longhorn.io/component: share-manager
+  ingress:
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "2049"
+              protocol: TCP

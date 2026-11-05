@@ -281,6 +281,10 @@ class ContainerRegistry(ComponentResource):
             case K8sEnvironment.DAWN | K8sEnvironment.ZENITH:
                 # Extract the ClusterIP for DAWN and ZENITH environments
                 self.harbor_ip = args.config.require("dawn_load_balancer_ip")
+            case K8sEnvironment.TALOS:
+                # The ingress-nginx LoadBalancer IP from k3s ServiceLB. Talos itself reaches Harbor
+                # through the SideroLink gateway, not this address
+                self.harbor_ip = args.config.require("harbor_ip")
 
         # Create a daemonset to skip TLS verification for the harbor registry
         # This is needed while using staging/self-signed certificates for Harbor
@@ -373,7 +377,13 @@ class ContainerRegistry(ComponentResource):
                                         name="HARBOR_URL",
                                         value="harbor.harbor.svc.cluster.local",
                                     ),
-                                ],
+                                ]
+                                # The NVIDIA device plugin and CUDA images are only on nvcr.io
+                                + (
+                                    [EnvVarArgs(name="PROXY_NVCR", value="true")]
+                                    if k8s_environment is K8sEnvironment.TALOS
+                                    else []
+                                ),
                                 command=["/bin/sh", "/scripts/configure_harbor.sh"],
                                 volume_mounts=[
                                     VolumeMountArgs(
