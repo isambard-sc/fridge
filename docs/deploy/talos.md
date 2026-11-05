@@ -99,5 +99,7 @@ Copy each to `Pulumi.talos-demo.yaml`, then set the secrets with `pulumi config 
 ## Known limitations
 
 - Single node only: the API endpoint is the one node's tunnel address.
+- The gateway's egress is limited by TLS SNI, not by the HTTP `Host` header. It holds because Harbor's is the only Ingress on the access cluster: a request with Harbor's SNI and another `Host` gets ingress-nginx's default 404 backend. Do not add other Ingresses to that ingress-nginx without revisiting `talos-gateway-to-harbor` (a separate IngressClass for Harbor, or L7 rules on `Host`).
+- Anything that can pull through Harbor's proxy projects can make Harbor ask the upstream registries for image names it chooses: a narrow covert channel, which the node has by design. The tunnel pod has no Harbor credentials, so it can only pull.
 - Cilium 1.20 is tested by Cilium up to Kubernetes 1.36; Talos 1.14 runs 1.37.
 - Longhorn on Talos 1.14 runs with workload isolation (the kubelet and pods in their own PID and mount namespace), which Longhorn does not document. If volumes fail to attach, set `SecurityProfileConfig` `workloadIsolation: false` and report it.
