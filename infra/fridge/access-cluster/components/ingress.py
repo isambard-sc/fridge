@@ -59,7 +59,14 @@ class Ingress(ComponentResource):
                         },
                     ),
                     opts=ResourceOptions.merge(
-                        child_opts, ResourceOptions(depends_on=ingress_nginx_ns)
+                        child_opts,
+                        ResourceOptions(
+                            depends_on=ingress_nginx_ns,
+                            # A replacement can't run next to the old release: both would
+                            # own the cluster-wide IngressClass `nginx`
+                            delete_before_replace=k8s_environment
+                            is K8sEnvironment.TALOS,
+                        ),
                     ),
                 )
 
