@@ -34,6 +34,14 @@ class Ingress(ComponentResource):
                 ingress_nginx = Release(
                     "ingress-nginx",
                     ReleaseArgs(
+                        # On Talos, a fixed name, so the controller's Service is
+                        # ingress-nginx-controller: the SideroLink gateway and its egress
+                        # policy name it before this stack exists
+                        name=(
+                            "ingress-nginx"
+                            if k8s_environment is K8sEnvironment.TALOS
+                            else None
+                        ),
                         chart="ingress-nginx",
                         version=SoftwareVersion.INGRESS_NGINX.value,
                         repository_opts={
