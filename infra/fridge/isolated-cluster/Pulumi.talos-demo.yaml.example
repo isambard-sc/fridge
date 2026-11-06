@@ -29,5 +29,7 @@ config:
   fridge-isolated:azure_subscription_id: unused
   fridge-isolated:azure_resource_group: unused
   fridge-isolated:azure_disk_encryption_set: unused
+  fridge-isolated:access_cluster_load_balancer_ip: unused
+  fridge-isolated:fridge_api_ip: unused
   # The kubeconfig context that reaches the Talos API server through HAProxy (docs/deploy/talos.md step 3)
   kubernetes:context: fridge-talos
