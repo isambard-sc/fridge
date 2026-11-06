@@ -40,6 +40,10 @@ class SoftwareVersion(Enum):
     CURL_JQ = "latest"
     HAPROXY = "3.4.6"
     HARBOR = "1.19.2"
+    # Talos target: the tenant VM is arm64, and no released Harbor (<= 2.15.4) has arm64 images.
+    # 2.16.0-rc1 is the first multi-arch build; replace with 2.16.0 when it is released
+    HARBOR_TALOS = "1.19.4"
+    HARBOR_TALOS_IMAGE_TAG = "v2.16.0-rc1"
     INGRESS_NGINX = "4.13.2"
     LONGHORN = "1.9.0"
     NETBIRD = "0.80.0"

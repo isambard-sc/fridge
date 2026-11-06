@@ -125,12 +125,38 @@ class ContainerRegistry(ComponentResource):
             case _:
                 registry_storage_class = args.storage_classes.standard_storage_name
 
+        # Every Harbor image, by its path in the chart's values
+        harbor_image_paths = [
+            ("nginx",),
+            ("portal",),
+            ("core",),
+            ("jobservice",),
+            ("registry", "registry"),
+            ("registry", "controller"),
+            ("trivy",),
+            ("database", "internal"),
+            ("redis", "internal"),
+            ("exporter",),
+        ]
+        harbor_image_values: dict = {}
+        if k8s_environment is K8sEnvironment.TALOS:
+            # Released Harbor images are amd64 only; see SoftwareVersion.HARBOR_TALOS
+            for path in harbor_image_paths:
+                node = harbor_image_values
+                for key in path:
+                    node = node.setdefault(key, {})
+                node["image"] = {"tag": SoftwareVersion.HARBOR_TALOS_IMAGE_TAG.value}
+
         self.harbor = Release(
             "harbor",
             ReleaseArgs(
                 chart="harbor",
                 namespace="harbor",
-                version=SoftwareVersion.HARBOR.value,
+                version=(
+                    SoftwareVersion.HARBOR_TALOS
+                    if k8s_environment is K8sEnvironment.TALOS
+                    else SoftwareVersion.HARBOR
+                ).value,
                 repository_opts=RepositoryOptsArgs(
                     repo="https://helm.goharbor.io",
                 ),
@@ -166,7 +192,8 @@ class ContainerRegistry(ComponentResource):
                     # A ReadWriteOnce volume can't be attached to the old and new
                     # pods at once during a rolling update
                     "updateStrategy": {"type": "Recreate"},
-                },
+                }
+                | harbor_image_values,
             ),
             opts=ResourceOptions.merge(
                 child_opts,
