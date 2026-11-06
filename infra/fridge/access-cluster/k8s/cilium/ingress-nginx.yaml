@@ -96,3 +96,19 @@ spec:
         - ports:
             - port: "8089"
               protocol: TCP
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: admission-webhook-jobs
+  namespace: ingress-nginx
+spec:
+  # The chart's admission-create/-patch hook Jobs write the webhook's certificate through the API server. They run on
+  # every install and upgrade of the release, after default-deny-all exists
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: ingress-nginx
+      k8s:app.kubernetes.io/component: admission-webhook
+  egress:
+    - toEntities:
+        - kube-apiserver
