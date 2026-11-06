@@ -4,7 +4,8 @@ config:
   fridge-isolated:k8s_env: Talos
   fridge-isolated:access_cluster_stack: talos-demo
   fridge-isolated:base_fqdn: fridge.internal
-  fridge-isolated:block_storage_size: 30Gi
+  # Longhorn on the node schedules about 35 GB (a 50 GB EPHEMERAL, less its 30% reserve): keep the two volumes small
+  fridge-isolated:block_storage_size: 10Gi
   fridge-isolated:longhorn_replicas: 1
   fridge-isolated:run_tests: true
   fridge-isolated:fridge_api_admin:
@@ -20,7 +21,7 @@ config:
   fridge-isolated:s3_admin_secret_key:
     secure: REPLACE
   fridge-isolated:seaweedfs:
-    pool_size: 40Gi
+    pool_size: 10Gi
     root_user:
       secure: REPLACE
     root_password:
