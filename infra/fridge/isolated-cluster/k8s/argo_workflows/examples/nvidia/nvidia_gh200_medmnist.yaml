@@ -1,0 +1,245 @@
+# Trains and evaluates an image classifier on a MedMNIST dataset that a Job Submitter has copied onto the shared
+# volume: the FRIDGE version of the AIRR-BRIDGE / SWSDE workshop's medmnist-classifier (Kubernetes on Isambard-AI),
+# so the same job can be shown on the shared cluster and inside FRIDGE.
+#
+# Data is MedMNIST v3 (https://medmnist.com/, CC BY 4.0, Zenodo record 10519652): public, pre-processed,
+# de-identified images, standing in for sensitive data. Unlike the shared-cluster version there is no download step
+# (workflow pods have no internet): upload <dataset>.npz to ingress and copy it to the volume first:
+#   POST /object/ingress/upload   (file=@pneumoniamnist.npz)
+#   POST /object/move?direction=ingress&files=pneumoniamnist.npz
+# Results go to the volume as medmnist-metrics.json, medmnist-history.json and medmnist-model.pt, for
+#   POST /object/move?direction=egress&files=medmnist-metrics.json%3Bmedmnist-history.json%3Bmedmnist-model.pt
+#
+# Steps: train on one GH200 (ResNet-18, keeps the best epoch by validation accuracy), then evaluate on CPU against the
+# held-out test split, which train never sees. The image comes through Harbor's proxy-nvcr.io project (~12 GB
+# compressed for arm64: the first pull takes a while).
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: medmnist-fridge
+  namespace: argo-workflows
+spec:
+  entrypoint: main
+  serviceAccountName: argo-workflow
+  activeDeadlineSeconds: 7200
+  arguments:
+    parameters:
+      - name: dataset-file
+        description: The MedMNIST 2D .npz on the shared volume (multi-class; chestmnist is multi-label and not supported)
+        value: pneumoniamnist.npz
+      - name: epochs
+        value: "20"
+      - name: batch-size
+        value: "256"
+      - name: learning-rate
+        value: "0.001"
+      - name: seed
+        value: "0"
+  volumes:
+    - name: block-storage
+      persistentVolumeClaim:
+        claimName: block-storage-pvc
+  templates:
+    - name: main
+      steps:
+        - - name: train
+            template: train
+        - - name: evaluate
+            template: evaluate
+
+    - name: train
+      # The container toolkit's runtime, which mounts the driver and the GPU the device plugin allocates
+      podSpecPatch: '{"runtimeClassName": "nvidia"}'
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      script:
+        # nvcr.io/nvidia/pytorch:26.09-py3, the same digest as the shared-cluster template (has a linux/arm64 build)
+        image: nvcr.io/nvidia/pytorch:26.09-py3@sha256:6e8ccc607fc2a51e3741667b86316a0889418ba8b78ed0ba96e8d282b648a7a6
+        command: [python]
+        env:
+          - name: HOME
+            value: /tmp
+          - name: PYTHONDONTWRITEBYTECODE
+            value: "1"
+          - name: DATASET
+            value: "{{workflow.parameters.dataset-file}}"
+          - name: NVIDIA_DRIVER_CAPABILITIES
+            value: compute,utility
+        source: |
+          import json, math, os, time
+          import numpy as np, torch, torch.nn as nn, torchvision
+
+          epochs = int("{{workflow.parameters.epochs}}")
+          batch = int("{{workflow.parameters.batch-size}}")
+          lr = float("{{workflow.parameters.learning-rate}}")
+          torch.manual_seed(int("{{workflow.parameters.seed}}"))
+
+          dev = torch.device("cuda")  # no CPU fallback: no GPU means the request didn't work
+          print("GPU:", torch.cuda.get_device_name(0))
+
+          d = np.load(os.path.join("/data", os.environ["DATASET"]))  # allow_pickle stays False: submitted file
+
+          def split(name):
+              x = torch.from_numpy(d[f"{name}_images"]).float().div_(255)
+              x = x.unsqueeze(1) if x.ndim == 3 else x.permute(0, 3, 1, 2)  # -> N,C,H,W
+              y = torch.from_numpy(d[f"{name}_labels"])
+              if y.shape[1] != 1:
+                  raise SystemExit("multi-label datasets are not supported")
+              return ((x - 0.5) / 0.5).to(dev), y.view(-1).long().to(dev)
+
+          xtr, ytr = split("train")
+          xva, yva = split("val")
+          channels, classes = xtr.shape[1], int(ytr.max()) + 1
+          print(f"train {tuple(xtr.shape)}  val {tuple(xva.shape)}  classes {classes}")
+
+          # ResNet-18 with a 3x3 stride-1 stem and no max-pool: the stock 7x7/2 + pool stem throws away most of a
+          # 28-64px image. Keep in step with build_model in the evaluate template.
+          def build_model(channels, classes):
+              m = torchvision.models.resnet18(num_classes=classes)
+              m.conv1 = nn.Conv2d(channels, 64, 3, 1, 1, bias=False)
+              m.maxpool = nn.Identity()
+              return m
+
+          model = build_model(channels, classes).to(dev).to(memory_format=torch.channels_last)
+          opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+          steps = epochs * math.ceil(len(xtr) / batch)
+          sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=steps)
+          loss_fn = nn.CrossEntropyLoss()
+
+          @torch.no_grad()
+          def accuracy(x, y):
+              model.eval()
+              correct = 0
+              for i in range(0, len(x), 1024):
+                  with torch.autocast("cuda", dtype=torch.bfloat16):
+                      correct += (model(x[i:i + 1024]).argmax(1) == y[i:i + 1024]).sum().item()
+              return correct / len(x)
+
+          best, history = -1.0, []
+          for epoch in range(1, epochs + 1):
+              model.train()
+              t0, total = time.time(), 0.0
+              perm = torch.randperm(len(xtr), device=dev)
+              for i in range(0, len(xtr), batch):
+                  idx = perm[i:i + batch]
+                  xb = xtr[idx]
+                  xb = torch.where(torch.rand(len(xb), 1, 1, 1, device=dev) < 0.5, xb.flip(3), xb)
+                  with torch.autocast("cuda", dtype=torch.bfloat16):
+                      loss = loss_fn(model(xb), ytr[idx])
+                  opt.zero_grad(set_to_none=True)
+                  loss.backward()
+                  opt.step()
+                  sched.step()
+                  total += loss.item() * len(idx)
+              val = accuracy(xva, yva)
+              history.append({"epoch": epoch, "loss": total / len(xtr), "val_acc": val})
+              print(f"epoch {epoch:3d}  loss {total / len(xtr):.4f}  val_acc {val:.4f}  {time.time() - t0:.1f}s")
+              if val > best:
+                  best = val
+                  torch.save({"state_dict": model.state_dict(), "channels": channels,
+                              "classes": classes, "epoch": epoch, "val_acc": val}, "/data/medmnist-model.pt")
+
+          json.dump(history, open("/data/medmnist-history.json", "w"), indent=1)
+          print(f"best val_acc {best:.4f}")
+        resources:
+          requests:
+            cpu: "8"
+            memory: 32Gi
+          limits:
+            cpu: "8"
+            memory: 32Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+          - name: block-storage
+            mountPath: /data
+          - name: tmp
+            mountPath: /tmp
+
+    - name: evaluate
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      script:
+        image: nvcr.io/nvidia/pytorch:26.09-py3@sha256:6e8ccc607fc2a51e3741667b86316a0889418ba8b78ed0ba96e8d282b648a7a6
+        command: [python]
+        env:
+          - name: HOME
+            value: /tmp
+          - name: PYTHONDONTWRITEBYTECODE
+            value: "1"
+          - name: DATASET
+            value: "{{workflow.parameters.dataset-file}}"
+        source: |
+          import json, os
+          import numpy as np, torch, torch.nn as nn, torchvision
+
+          # Same as build_model in the train template.
+          def build_model(channels, classes):
+              m = torchvision.models.resnet18(num_classes=classes)
+              m.conv1 = nn.Conv2d(channels, 64, 3, 1, 1, bias=False)
+              m.maxpool = nn.Identity()
+              return m
+
+          ckpt = torch.load("/data/medmnist-model.pt", map_location="cpu", weights_only=True)
+          model = build_model(ckpt["channels"], ckpt["classes"])
+          model.load_state_dict(ckpt["state_dict"])
+          model.eval()
+
+          d = np.load(os.path.join("/data", os.environ["DATASET"]))
+          x = torch.from_numpy(d["test_images"]).float().div_(255)
+          x = x.unsqueeze(1) if x.ndim == 3 else x.permute(0, 3, 1, 2)
+          x = (x - 0.5) / 0.5
+          y = torch.from_numpy(d["test_labels"]).view(-1).long()
+          k = ckpt["classes"]
+
+          with torch.no_grad():
+              prob = torch.cat([model(x[i:i + 512]).softmax(1) for i in range(0, len(x), 512)])
+          pred = prob.argmax(1)
+
+          cm = torch.zeros(k, k, dtype=torch.long)  # rows: true, cols: predicted
+          for t, p in zip(y, pred):
+              cm[t, p] += 1
+          acc = (pred == y).float().mean().item()
+          recall = cm.diag().float() / cm.sum(1).clamp(min=1)
+          balanced = recall.mean().item()
+
+          # One-vs-rest ROC AUC per class (Mann-Whitney rank form), macro-averaged; for a binary dataset both
+          # classes give the same AUC.
+          def auc(score, positive):
+              ranks = torch.empty_like(score)
+              ranks[score.argsort()] = torch.arange(1, len(score) + 1, dtype=score.dtype)
+              n_pos = positive.sum().item()
+              n_neg = len(score) - n_pos
+              if n_pos == 0 or n_neg == 0:
+                  return float("nan")
+              return (ranks[positive].sum().item() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+          auc_macro = float(np.nanmean([auc(prob[:, c].double(), y == c) for c in range(k)]))
+
+          print(f"checkpoint: epoch {ckpt['epoch']}, val_acc {ckpt['val_acc']:.4f}")
+          print(f"TEST  n={len(y)}  accuracy {acc:.4f}  balanced_accuracy {balanced:.4f}  auc {auc_macro:.4f}")
+          print("per-class recall:", [round(r, 4) for r in recall.tolist()])
+          print("confusion matrix (rows true, cols predicted):")
+          for row in cm.tolist():
+              print("  ", row)
+
+          # The results a Job Submitter copies out through egress
+          json.dump({"dataset": os.environ["DATASET"], "test_n": len(y), "accuracy": round(acc, 4),
+                     "balanced_accuracy": round(balanced, 4), "auc": round(auc_macro, 4),
+                     "per_class_recall": [round(r, 4) for r in recall.tolist()],
+                     "confusion_matrix": cm.tolist(), "checkpoint_epoch": ckpt["epoch"]},
+                    open("/data/medmnist-metrics.json", "w"), indent=1)
+        resources:
+          requests:
+            cpu: "4"
+            memory: 8Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+        volumeMounts:
+          - name: block-storage
+            mountPath: /data
+          - name: tmp
+            mountPath: /tmp
+  ttlStrategy:
+    secondsAfterCompletion: 3600 # 1 hour

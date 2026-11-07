@@ -70,6 +70,7 @@ class TestWorkflows(ComponentResource):
                         "nvidia-examples",
                         files=[
                             "./k8s/argo_workflows/examples/nvidia/nvidia_gh200_check.yaml",
+                            "./k8s/argo_workflows/examples/nvidia/nvidia_gh200_medmnist.yaml",
                         ],
                         opts=child_opts,
                     )
