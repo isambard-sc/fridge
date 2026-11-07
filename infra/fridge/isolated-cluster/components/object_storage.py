@@ -9,7 +9,7 @@ from pulumi_kubernetes.meta.v1 import ObjectMetaArgs
 from pulumi_random import RandomPassword
 
 from .storage_classes import StorageClasses
-from enums import PodSecurityStandard, SoftwareVersion
+from enums import K8sEnvironment, PodSecurityStandard, SoftwareVersion
 
 _K8S_QUANTITY = re.compile(r"^\d+(\.\d+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)$")
 
@@ -236,6 +236,19 @@ class ObjectStorage(ComponentResource):
                 },
                 "master": {
                     "replicas": 1,
+                    # Talos's single small pool (seaweedfs.pool_size) has room for only ~10 volumes of the default
+                    # 1000 MB, and SeaweedFS grows each new collection (one per bucket) by 7 at once: the egress
+                    # bucket then found no free slot ("No writable volumes", 2026-11-07). On Talos, smaller volumes
+                    # (more slots on the same pool) grown one at a time; other targets keep the chart's defaults
+                    **(
+                        {
+                            "volumeSizeLimitMB": 256,
+                            "config": "[master.volume_growth]\ncopy_1 = 1\ncopy_2 = 2\ncopy_3 = 3\ncopy_other = 1\n",
+                        }
+                        if K8sEnvironment(args.config.get("k8s_env"))
+                        is K8sEnvironment.TALOS
+                        else {}
+                    ),
                     "data": {
                         "type": "persistentVolumeClaim",
                         "size": "1Gi",
