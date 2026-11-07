@@ -64,21 +64,34 @@ spec:
             value: "1"
           - name: DATASET
             value: "{{workflow.parameters.dataset-file}}"
+          - name: EPOCHS
+            value: "{{workflow.parameters.epochs}}"
+          - name: BATCH_SIZE
+            value: "{{workflow.parameters.batch-size}}"
+          - name: LEARNING_RATE
+            value: "{{workflow.parameters.learning-rate}}"
+          - name: SEED
+            value: "{{workflow.parameters.seed}}"
           - name: NVIDIA_DRIVER_CAPABILITIES
             value: compute,utility
         source: |
           import json, math, os, time
           import numpy as np, torch, torch.nn as nn, torchvision
 
-          epochs = int("{{workflow.parameters.epochs}}")
-          batch = int("{{workflow.parameters.batch-size}}")
-          lr = float("{{workflow.parameters.learning-rate}}")
-          torch.manual_seed(int("{{workflow.parameters.seed}}"))
+          # Parameters arrive as environment variables, never in this source: Argo substitutes template tags as text,
+          # so a submitted value could otherwise add code to a template that FRIDGE treats as the code allowed to run
+          epochs = int(os.environ["EPOCHS"])
+          batch = int(os.environ["BATCH_SIZE"])
+          lr = float(os.environ["LEARNING_RATE"])
+          torch.manual_seed(int(os.environ["SEED"]))
 
           dev = torch.device("cuda")  # no CPU fallback: no GPU means the request didn't work
           print("GPU:", torch.cuda.get_device_name(0))
 
-          d = np.load(os.path.join("/data", os.environ["DATASET"]))  # allow_pickle stays False: submitted file
+          dataset = os.environ["DATASET"]
+          if os.path.basename(dataset) != dataset or not dataset.endswith(".npz"):
+              raise SystemExit(f"dataset-file must be a .npz file name on the volume, not a path: {dataset!r}")
+          d = np.load(os.path.join("/data", dataset))  # allow_pickle stays False: submitted file
 
           def split(name):
               x = torch.from_numpy(d[f"{name}_images"]).float().div_(255)
@@ -186,7 +199,10 @@ spec:
           model.load_state_dict(ckpt["state_dict"])
           model.eval()
 
-          d = np.load(os.path.join("/data", os.environ["DATASET"]))
+          dataset = os.environ["DATASET"]
+          if os.path.basename(dataset) != dataset or not dataset.endswith(".npz"):
+              raise SystemExit(f"dataset-file must be a .npz file name on the volume, not a path: {dataset!r}")
+          d = np.load(os.path.join("/data", dataset))
           x = torch.from_numpy(d["test_images"]).float().div_(255)
           x = x.unsqueeze(1) if x.ndim == 3 else x.permute(0, 3, 1, 2)
           x = (x - 0.5) / 0.5
